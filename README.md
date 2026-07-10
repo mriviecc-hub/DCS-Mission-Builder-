@@ -4,7 +4,9 @@ A desktop app that turns a plain-English request ("dawn CAP over Sochi with
 two F-16s against a pair of MiG-29s") into a ready-to-fly DCS World mission
 file (`.miz`) — no interaction with the DCS Mission Editor required.
 
-Claude parses your prompt into a structured mission spec, then
+Claude parses your prompt into a structured mission spec (or, with no API key
+configured, a built-in offline keyword parser does — see
+[Prompt parsing](#prompt-parsing-claude-vs-offline) below), then
 [pydcs](https://github.com/pydcs/dcs) builds a real DCS mission from it
 (units, waypoints, loadouts, weather, triggers), and generated Lua backed by
 [MOOSE](https://github.com/FlightControl-Master/MOOSE) gives the mission
@@ -52,9 +54,11 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-You'll need an [Anthropic API key](https://console.anthropic.com/) — enter it
+An [Anthropic API key](https://console.anthropic.com/) is optional — enter it
 in the app's Settings panel once the desktop app is running (or set
-`ANTHROPIC_API_KEY` as an environment variable before launching).
+`ANTHROPIC_API_KEY` as an environment variable before launching) for flexible,
+free-form prompt parsing. Without one, the app automatically falls back to a
+built-in offline parser — see [Prompt parsing](#prompt-parsing-claude-vs-offline).
 
 Run the test suite (no API key required — the LLM call is mocked):
 
@@ -102,6 +106,50 @@ its own window. In Settings you can:
 
 Type a prompt, hit **Generate mission**, then open the `.miz` from your DCS
 Missions folder (or use **Show file in folder**) in DCS World.
+
+## Prompt parsing: Claude vs. offline
+
+The app has two interchangeable ways to turn your prompt into a mission spec,
+and picks automatically based on whether an API key is configured:
+
+- **Claude (API key set):** genuinely understands free-form, creative
+  phrasing ("something moody and dangerous over the coast at dusk"), infers
+  intent, and writes a custom briefing.
+- **Offline keyword parser (no API key):** zero cost, zero setup, no network
+  calls - pure Python string/keyword matching (`backend/app/rule_parser.py`).
+  It recognizes common aircraft nicknames (F-16/Viper, Hornet, Warthog,
+  Mirage, Flanker, Fulcrum, etc.), mission-type words (CAP/intercept/patrol
+  vs. strike/bomb/destroy), target-profile words (convoy/SAM site/depot),
+  airport names, numbers ("two", "a pair of", "4x"), and time-of-day/weather
+  words. It always produces a valid mission by falling back to sensible
+  defaults for anything it can't confidently extract - but it won't
+  understand indirect or unusually-phrased requests the way Claude does, so
+  prompts work best when they mention things somewhat literally, e.g. *"CAP
+  over Sochi with two F-16s against a pair of MiG-29s"* rather than *"give me
+  something fun near the water."*
+
+The app tells you which one was used after each generation (shown next to
+the saved file path).
+
+## Troubleshooting
+
+**`KeyError: 'country_list'` crash on startup (Windows, Python 3.13+):**
+`pydcs` scans your DCS installation's aircraft liveries on first import, and
+its scanner uses an old `exec()`/`locals()` trick that breaks on Python 3.13
+and newer (a real upstream `pydcs` bug, not specific to this app). Either:
+- install Python 3.11 or 3.12 alongside your current version and rebuild the
+  venv with it (`py -3.11 -m venv venv`), or
+- patch it directly: in
+  `backend/venv/Lib/site-packages/dcs/liveries_scanner.py`, replace
+  ```python
+  exec(f"country_list = {countries}")
+  countries = set(filter(lambda x: x != "", locals()['country_list']))
+  ```
+  with
+  ```python
+  country_list = eval(countries)
+  countries = set(filter(lambda x: x != "", country_list))
+  ```
 
 ## What "dynamic" means in v1
 
