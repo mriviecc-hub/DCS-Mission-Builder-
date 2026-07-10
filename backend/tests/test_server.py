@@ -40,12 +40,19 @@ def test_options_lists_whitelists():
     assert "convoy" in data["strike_target_profiles"]
 
 
-def test_generate_without_api_key_returns_400(monkeypatch):
+def test_generate_without_api_key_falls_back_to_rule_based_parser(monkeypatch, tmp_path):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    out_path = tmp_path / "no_key.miz"
     client = TestClient(server.app)
-    resp = client.post("/generate", json={"prompt": "CAP over Sochi"})
-    assert resp.status_code == 400
-    assert "ANTHROPIC_API_KEY" in resp.json()["detail"]
+    resp = client.post(
+        "/generate",
+        json={"prompt": "CAP over Sochi with two F-16s", "save_path": str(out_path)},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["parser_used"] == "rule_based"
+    assert data["spec"]["player_aircraft"] == "F_16C_50"
+    assert out_path.is_file()
 
 
 def test_generate_end_to_end_with_mocked_llm(tmp_path, monkeypatch):
@@ -66,6 +73,7 @@ def test_generate_end_to_end_with_mocked_llm(tmp_path, monkeypatch):
     data = resp.json()
     assert data["saved_path"] == str(out_path)
     assert data["spec"]["title"] == "Dawn Patrol"
+    assert data["parser_used"] == "claude"
 
     assert out_path.is_file()
     with zipfile.ZipFile(out_path) as z:

@@ -24,6 +24,7 @@ from .mission_spec import (
     STRIKE_TARGET_PROFILES,
     MissionSpec,
 )
+from .rule_parser import parse_prompt_rule_based
 
 app = FastAPI(title="DCS Mission Companion")
 
@@ -38,6 +39,7 @@ class GenerateRequest(BaseModel):
 class GenerateResponse(BaseModel):
     spec: MissionSpec
     saved_path: str
+    parser_used: str  # "claude" or "rule_based"
 
 
 @app.get("/health")
@@ -62,16 +64,18 @@ def generate(req: GenerateRequest) -> GenerateResponse:
         raise HTTPException(400, "prompt must not be empty")
 
     api_key = req.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            400,
-            "ANTHROPIC_API_KEY is not set. Add your Anthropic API key in the app settings.",
-        )
-
-    try:
-        spec = parse_prompt(req.prompt, client=anthropic.Anthropic(api_key=api_key))
-    except ParseError as e:
-        raise HTTPException(422, str(e)) from e
+    if api_key:
+        try:
+            spec = parse_prompt(req.prompt, client=anthropic.Anthropic(api_key=api_key))
+            parser_used = "claude"
+        except ParseError as e:
+            raise HTTPException(422, str(e)) from e
+    else:
+        # No API key configured - fall back to the offline keyword-based
+        # parser instead of failing outright. Less flexible with vague or
+        # creative phrasing, but works with zero setup and no network calls.
+        spec = parse_prompt_rule_based(req.prompt)
+        parser_used = "rule_based"
 
     if req.save_path:
         out_path = req.save_path
@@ -84,7 +88,7 @@ def generate(req: GenerateRequest) -> GenerateResponse:
     except MissionBuildError as e:
         raise HTTPException(422, str(e)) from e
 
-    return GenerateResponse(spec=spec, saved_path=out_path)
+    return GenerateResponse(spec=spec, saved_path=out_path, parser_used=parser_used)
 
 
 @app.get("/download")
